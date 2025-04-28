@@ -29,16 +29,8 @@ let zoomScaler = input => {
     .domain([20, 5])
     .range([14, 28])
     .clamp(true)
-  let scale2 = d3
-    .scaleLinear()
-    .domain([2, 0.1])
-    .range([28, 56])
   if (input >= 5) {
     return scale1(input)
-    // return 28
-  } else if (input <= 2) {
-    // return scale2(input)
-    return 28
   } else {
     return 28
   }
@@ -107,14 +99,14 @@ class Projection extends Component {
   }
 
   getZFromScale(scale) {
-    let rvFOV = THREE.Math.degToRad(this.camera.fov)
+    let rvFOV = THREE.MathUtils.degToRad(this.camera.fov)
     let scale_height = this.props.height / scale
     let camera_z_position = scale_height / (2 * Math.tan(rvFOV / 2))
     return camera_z_position
   }
 
   getScaleFromZ(camera_z_position) {
-    let rvFOV = THREE.Math.degToRad(this.camera.fov)
+    let rvFOV = THREE.MathUtils.degToRad(this.camera.fov)
     let half_fov_height = Math.tan(rvFOV / 2) * camera_z_position
     let fov_height = half_fov_height * 2
     let scale = this.props.height / fov_height
@@ -135,8 +127,8 @@ class Projection extends Component {
     this.d3_zoom.transform(view, resize_transform)
   }
 
-  zoomHandler() {
-    let d3_transform = d3.event.transform
+  zoomHandler(event) {
+    let d3_transform = event.transform
 
     let scale = d3_transform.k
     let x = -(d3_transform.x - this.props.width / 2) / scale
@@ -158,7 +150,7 @@ class Projection extends Component {
 
     let aspect = this.camera.aspect
     let vFOV = this.camera.fov
-    let rvFOV = THREE.Math.degToRad(vFOV)
+    let rvFOV = THREE.MathUtils.degToRad(vFOV)
 
     let xs = mnist_embeddings.map(e => e[0])
     let min_x = _.min(xs)
@@ -252,9 +244,9 @@ class Projection extends Component {
       let positions = new Float32Array(numVertices * 3)
       let offsets = new Float32Array(numVertices * 2)
       let colors = new Float32Array(numVertices * 3)
-      geometry.addAttribute('position', new THREE.BufferAttribute(positions, 3))
-      geometry.addAttribute('offset', new THREE.BufferAttribute(offsets, 2))
-      geometry.addAttribute('color', new THREE.BufferAttribute(colors, 3))
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geometry.setAttribute('offset', new THREE.BufferAttribute(offsets, 2))
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
 
       for (let i = 0, index = 0, l = numVertices; i < l; i++, index += 3) {
         let x = echunk[i][0]
@@ -286,7 +278,7 @@ class Projection extends Component {
 
       // uniforms
       let uniforms = {
-        texture: { value: this.textures[c] },
+        textureMap: { value: this.textures[c] },
         repeat: { value: new THREE.Vector2(texture_subsize, texture_subsize) },
         size: { value: sprite_image_size },
       }
@@ -305,13 +297,13 @@ class Projection extends Component {
         }`
 
       let fragment_shader = `
-        uniform sampler2D texture;
+        uniform sampler2D textureMap;
         uniform vec2 repeat;
         varying vec2 vOffset;
         varying vec3 vColor;
         void main() {
           vec2 uv = vec2( gl_PointCoord.x, gl_PointCoord.y );
-          vec4 tex = texture2D( texture, uv * repeat + vOffset );
+          vec4 tex = texture( textureMap, uv * repeat + vOffset );
           if ( tex.r < 0.5 ) discard;
           tex.r = 1.0;
           tex.g = 1.0;
@@ -346,15 +338,15 @@ class Projection extends Component {
     let numVertices = vertices.length
     var positions = new Float32Array(numVertices * 3) // 3 coordinates per point
     var offsets = new Float32Array(numVertices * 2) // 2 coordinates per point
-    geometry.addAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geometry.addAttribute('offset', new THREE.BufferAttribute(offsets, 2))
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.setAttribute('offset', new THREE.BufferAttribute(offsets, 2))
 
     // all the attributes will be filled on hover
     let texture_subsize = 1 / sprite_side
 
     // uniforms
     let uniforms = {
-      texture: { value: this.textures[0] },
+      textureMap: { value: this.textures[0] },
       repeat: { value: new THREE.Vector2(texture_subsize, texture_subsize) },
       size: { value: 56.0 },
     }
@@ -370,12 +362,12 @@ class Projection extends Component {
         }`
 
     let fragment_shader = `
-        uniform sampler2D texture;
+        uniform sampler2D textureMap;
         uniform vec2 repeat;
         varying vec2 vOffset;
         void main() {
           vec2 uv = vec2( gl_PointCoord.x, gl_PointCoord.y );
-          vec4 tex = texture2D( texture, uv * repeat + vOffset );
+          vec4 tex = texture( textureMap, uv * repeat + vOffset );
           tex.a = tex.r;
           tex.r = 1.0;
           tex.g = 1.0;
@@ -408,7 +400,6 @@ class Projection extends Component {
     ]
 
     let vert = new THREE.Vector3(embedding[0], embedding[1], 0)
-    let vertices = [vert]
 
     var offsets = new Float32Array(2) // 2 coordinates per point
 
@@ -417,13 +408,18 @@ class Projection extends Component {
     offsets[0] = x
     offsets[1] = y
 
-    point.geometry.attributes.position.copyVector3sArray(vertices)
-    point.geometry.attributes.position.needsUpdate = true // required after the first render
+    // Replace copyVector3sArray with manual array copying
+    let position = point.geometry.attributes.position.array
+    position[0] = vert.x
+    position[1] = vert.y
+    position[2] = vert.z
+    point.geometry.attributes.position.needsUpdate = true
+
     point.geometry.attributes.offset.array = offsets
     point.geometry.attributes.offset.needsUpdate = true // required after the first render
 
     // need to set attributes on geometry and uniforms on material
-    point.material.uniforms.texture.value = this.textures[sprite_index]
+    point.material.uniforms.textureMap.value = this.textures[sprite_index]
   }
 
   removeHighlights() {
@@ -489,8 +485,8 @@ class Projection extends Component {
 
     this.raycaster = new THREE.Raycaster()
 
-    view.on('mousemove', () => {
-      let [mouseX, mouseY] = d3.mouse(view.node())
+    view.on('mousemove', (event) => {
+      let [mouseX, mouseY] = d3.pointer(event)
       let mouse_position = [mouseX, mouseY]
       this.checkIntersects(mouse_position)
     })
