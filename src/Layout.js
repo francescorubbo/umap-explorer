@@ -48,9 +48,13 @@ class Layout extends Component {
 
   setSize() {
     this.setState({ ww: window.innerWidth, wh: window.innerHeight })
-    let sidebar_height = this.sidebar_mount.offsetHeight
-    this.setState({ sidebar_height: sidebar_height })
-    if (this.sidebar_ctx) this.sidebar_ctx.imageSmoothingEnabled = false
+    if (this.sidebar_mount) {
+      const sidebar_height = this.sidebar_mount.offsetHeight;
+      this.setState({ sidebar_height: sidebar_height })
+    }
+    if (this.sidebar_ctx) {
+      this.sidebar_ctx.imageSmoothingEnabled = false
+    }
   }
 
   setSidebarCanvas(canvas) {
@@ -93,6 +97,12 @@ class Layout extends Component {
 
   componentWillUnmount() {
     window.removeEventListener('resize', this.setSize)
+  }
+
+  componentDidUpdate(prevProps, prevState) {
+    if (!prevState.sidebar_height && this.sidebar_mount) {
+      this.setSize();
+    }
   }
 
   render() {
