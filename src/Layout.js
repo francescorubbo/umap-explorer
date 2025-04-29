@@ -26,11 +26,11 @@ class Layout extends Component {
   constructor(props) {
     super(props)
     this.state = {
-      ww: null,
-      wh: null,
+      ww: window.innerWidth,
+      wh: window.innerHeight,
       sidebar_height: null,
       hover_index: null,
-      show_about: null,
+      show_about: window.location.hash === '#about',
       algorithm_choice: 0,
     }
     this.sidebar_ctx = null
@@ -77,11 +77,6 @@ class Layout extends Component {
     this.setState({ hover_index: hover_index })
   }
 
-  componentWillMount() {
-    this.setSize()
-    this.checkHash()
-  }
-
   checkHash() {
     if (window.location.hash && window.location.hash === '#about') {
       this.setState({ show_about: true })
@@ -91,6 +86,7 @@ class Layout extends Component {
   }
 
   componentDidMount() {
+    this.setSize()
     window.addEventListener('resize', this.setSize)
     window.addEventListener('popstate', this.checkHash)
   }
