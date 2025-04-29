@@ -5,7 +5,6 @@ import * as d3 from 'd3'
 import * as TWEEN from '@tweenjs/tween.js'
 import {
   BACKEND_URL,
-  SPRITE_SIDE,
   SPRITE_SIZE,
   SPRITE_NUMBER,
   SPRITE_IMAGE_SIZE,
@@ -14,24 +13,6 @@ import {
   fetchBackendConfig,
   fetchSpriteSheet
 } from './config'
-
-// Constants for sprite sheets
-let sprite_side = SPRITE_SIDE
-let sprite_size = SPRITE_SIZE
-let sprite_number = SPRITE_NUMBER
-let sprite_image_size = SPRITE_IMAGE_SIZE
-// actual sprite size needs to be power of 2
-let sprite_actual_size = SPRITE_ACTUAL_SIZE
-
-async function loadSpriteSheet(start, count) {
-  const response = await fetch(`${BACKEND_URL}/api/mnist/sprite/${start}/${count}`)
-  const blob = await response.blob()
-  return new Promise((resolve) => {
-    let img = document.createElement('img')
-    img.onload = () => resolve(img)
-    img.src = URL.createObjectURL(blob)
-  })
-}
 
 class Projection extends Component {
   constructor(props) {
@@ -44,6 +25,7 @@ class Projection extends Component {
       loading: true,
       error: null
     }
+    // Bind methods
     this.init = this.init.bind(this)
     this.addPoints = this.addPoints.bind(this)
     this.handleResize = this.handleResize.bind(this)
@@ -116,65 +98,61 @@ class Projection extends Component {
   }
 
   changeEmbeddings(prev_choice, new_choice) {
-    // assumes mnist embeddings has been updated
-
-    let ranges = []
-    for (let i = 0; i < sprite_number; i++) {
-      let start = i * sprite_size
-      let end = (i + 1) * sprite_size
-      if (i === sprite_number - 1) end = sprite_number * sprite_size
+    const ranges = []
+    for (let i = 0; i < SPRITE_NUMBER; i++) {
+      const start = i * SPRITE_SIZE
+      const end = (i + 1) * SPRITE_SIZE
+      if (i === SPRITE_NUMBER - 1) end = SPRITE_NUMBER * SPRITE_SIZE
       ranges.push([start, end])
     }
 
-    let embedding_chunks = ranges.map(range =>
+    const embedding_chunks = ranges.map(range =>
       this.props[this.props.algorithm_embedding_keys[new_choice]].slice(
         range[0],
         range[1]
       )
     )
 
-    for (let c = 0; c < sprite_number; c++) {
-      let echunk = embedding_chunks[c]
-
-      let points = this.scene.children[0].children[c]
-      let numVertices = echunk.length
-      let position = points.geometry.attributes.position.array
-      let target = new Float32Array(numVertices * 3)
+    for (let c = 0; c < SPRITE_NUMBER; c++) {
+      const echunk = embedding_chunks[c]
+      const points = this.scene.children[0].children[c]
+      const numVertices = echunk.length
+      const position = points.geometry.attributes.position.array
+      const target = new Float32Array(numVertices * 3)
+      
       for (let i = 0, index = 0, l = numVertices; i < l; i++, index += 3) {
-        let x = echunk[i][0]
-        let y = echunk[i][1]
-        let z = 0
+        const [x, y] = echunk[i]
         target[index] = x
         target[index + 1] = y
-        target[index + 2] = z
+        target[index + 2] = 0
       }
 
-      let tween = new TWEEN.Tween(position)
+      const tween = new TWEEN.Tween(position)
         .to(target, 1000)
         .easing(TWEEN.Easing.Linear.None)
-      tween.onUpdate(function() {
+      tween.onUpdate(() => {
         points.geometry.attributes.position = new THREE.BufferAttribute(
           position,
           3
         )
-        points.geometry.attributes.position.needsUpdate = true // required after the first render
+        points.geometry.attributes.position.needsUpdate = true
       })
       tween.start()
     }
   }
 
   getZFromScale(scale) {
-    let rvFOV = THREE.MathUtils.degToRad(this.camera.fov)
-    let scale_height = this.props.height / scale
-    let camera_z_position = scale_height / (2 * Math.tan(rvFOV / 2))
+    const rvFOV = THREE.MathUtils.degToRad(this.camera.fov)
+    const scale_height = this.props.height / scale
+    const camera_z_position = scale_height / (2 * Math.tan(rvFOV / 2))
     return camera_z_position
   }
 
   getScaleFromZ(camera_z_position) {
-    let rvFOV = THREE.MathUtils.degToRad(this.camera.fov)
-    let half_fov_height = Math.tan(rvFOV / 2) * camera_z_position
-    let fov_height = half_fov_height * 2
-    let scale = this.props.height / fov_height
+    const rvFOV = THREE.MathUtils.degToRad(this.camera.fov)
+    const half_fov_height = Math.tan(rvFOV / 2) * camera_z_position
+    const fov_height = half_fov_height * 2
+    const scale = this.props.height / fov_height
     return scale
   }
 
@@ -182,29 +160,28 @@ class Projection extends Component {
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(width, height)
-    let current_scale = this.getScaleFromZ(this.camera.position.z)
-    let d3_x = -(this.camera.position.x * current_scale) + this.props.width / 2
-    let d3_y = this.camera.position.y * current_scale + this.props.height / 2
-    var resize_transform = d3.zoomIdentity
+    const current_scale = this.getScaleFromZ(this.camera.position.z)
+    const d3_x = -(this.camera.position.x * current_scale) + this.props.width / 2
+    const d3_y = this.camera.position.y * current_scale + this.props.height / 2
+    const resize_transform = d3.zoomIdentity
       .translate(d3_x, d3_y)
       .scale(current_scale)
-    let view = d3.select(this.mount)
+    const view = d3.select(this.mount)
     this.d3_zoom.transform(view, resize_transform)
   }
 
   zoomHandler(event) {
-    let d3_transform = event.transform
-
-    let scale = d3_transform.k
-    let x = -(d3_transform.x - this.props.width / 2) / scale
-    let y = (d3_transform.y - this.props.height / 2) / scale
-    let z = this.getZFromScale(scale)
+    const d3_transform = event.transform
+    const scale = d3_transform.k
+    const x = -(d3_transform.x - this.props.width / 2) / scale
+    const y = (d3_transform.y - this.props.height / 2) / scale
+    const z = this.getZFromScale(scale)
 
     this.camera.position.set(x, y, z)
 
-    // point size scales at end of zoom
-    let new_size = zoomScaler(z)
-    let point_group = this.scene.children[0].children
+    // Update point size based on zoom level
+    const new_size = zoomScaler(z)
+    const point_group = this.scene.children[0].children
     for (let c = 0; c < point_group.length; c++) {
       point_group[c].material.uniforms.size.value = new_size
     }
@@ -439,35 +416,29 @@ class Projection extends Component {
   }
 
   highlightPoint(sprite_index, digit_index, full_index) {
-    let { algorithm_embedding_keys, algorithm_choice } = this.props
+    const { algorithm_embedding_keys, algorithm_choice } = this.props
+    const point = this.scene.children[1].children[0]
+    const embedding = this.props[algorithm_embedding_keys[algorithm_choice]][full_index]
+    const position = point.geometry.attributes.position.array
+    const offsets = new Float32Array(2)
 
-    let point = this.scene.children[1].children[0]
-
-    let embedding = this.props[algorithm_embedding_keys[algorithm_choice]][
-      full_index
-    ]
-
-    let vert = new THREE.Vector3(embedding[0], embedding[1], 0)
-
-    var offsets = new Float32Array(2) // 2 coordinates per point
-
-    // Calculate UV coordinates using the same normalized approach
-    let x = (digit_index % this.state.spriteSide) / this.state.spriteSide
-    let y = Math.floor(digit_index / this.state.spriteSide) / this.state.spriteSide
+    // Calculate normalized UV coordinates
+    const x = (digit_index % this.state.spriteSide) / this.state.spriteSide
+    const y = Math.floor(digit_index / this.state.spriteSide) / this.state.spriteSide
     offsets[0] = x
     offsets[1] = y
 
-    // Replace copyVector3sArray with manual array copying
-    let position = point.geometry.attributes.position.array
-    position[0] = vert.x
-    position[1] = vert.y
-    position[2] = vert.z
+    // Update position
+    position[0] = embedding[0]
+    position[1] = embedding[1]
+    position[2] = 0
     point.geometry.attributes.position.needsUpdate = true
 
+    // Update texture coordinates
     point.geometry.attributes.offset.array = offsets
-    point.geometry.attributes.offset.needsUpdate = true // required after the first render
+    point.geometry.attributes.offset.needsUpdate = true
 
-    // need to set attributes on geometry and uniforms on material
+    // Update texture
     point.material.uniforms.textureMap.value = this.textures[sprite_index]
   }
 
@@ -478,9 +449,9 @@ class Projection extends Component {
   }
 
   checkIntersects(mouse_position) {
-    let { width, height, sidebar_ctx, sidebar_image_size } = this.props
+    const { width, height, sidebar_ctx, sidebar_image_size } = this.props
 
-    function mouseToThree([mouseX, mouseY]) {
+    const mouseToThree = ([mouseX, mouseY]) => {
       return new THREE.Vector3(
         (mouseX / width) * 2 - 1,
         -(mouseY / height) * 2 + 1,
@@ -488,22 +459,23 @@ class Projection extends Component {
       )
     }
 
-    function sortIntersectsByDistanceToRay(intersects) {
+    const sortIntersectsByDistanceToRay = (intersects) => {
       return _.sortBy(intersects, 'distanceToRay')
     }
 
-    let mouse_vector = mouseToThree(mouse_position)
+    const mouse_vector = mouseToThree(mouse_position)
     this.raycaster.setFromCamera(mouse_vector, this.camera)
     this.raycaster.params.Points.threshold = 0.25
-    let intersects = this.raycaster.intersectObjects(
-      this.scene.children[0].children
-    )
+    
+    const intersects = this.raycaster.intersectObjects(this.scene.children[0].children)
+    
     if (intersects[0]) {
-      let sorted_intersects = sortIntersectsByDistanceToRay(intersects)
-      let intersect = sorted_intersects[0]
-      let sprite_index = intersect.object.userData.sprite_index
-      let digit_index = intersect.index
-      let full_index = sprite_index * this.state.spriteSize + digit_index
+      const sorted_intersects = sortIntersectsByDistanceToRay(intersects)
+      const intersect = sorted_intersects[0]
+      const sprite_index = intersect.object.userData.sprite_index
+      const digit_index = intersect.index
+      const full_index = sprite_index * this.state.spriteSize + digit_index
+      
       this.props.setHoverIndex(full_index)
       this.highlightPoint(sprite_index, digit_index, full_index)
       this.scene.children[1].visible = true
@@ -511,13 +483,11 @@ class Projection extends Component {
       if (sidebar_ctx && this.spriteImages[sprite_index]) {
         sidebar_ctx.fillRect(0, 0, sidebar_image_size, sidebar_image_size)
         sidebar_ctx.drawImage(
-          this.spriteImages[sprite_index],  // Use HTML image instead of Three.js texture
-          // source rectangle
+          this.spriteImages[sprite_index],
           (digit_index % this.state.spriteSide) * SPRITE_IMAGE_SIZE,
           Math.floor(digit_index / this.state.spriteSide) * SPRITE_IMAGE_SIZE,
           SPRITE_IMAGE_SIZE,
           SPRITE_IMAGE_SIZE,
-          // destination rectangle
           0,
           0,
           sidebar_image_size,
