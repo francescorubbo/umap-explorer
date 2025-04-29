@@ -3,43 +3,47 @@ import * as THREE from 'three'
 import * as _ from 'lodash'
 import * as d3 from 'd3'
 import * as TWEEN from '@tweenjs/tween.js'
+import {
+  BACKEND_URL,
+  SPRITE_SIDE,
+  SPRITE_SIZE,
+  SPRITE_NUMBER,
+  SPRITE_IMAGE_SIZE,
+  SPRITE_ACTUAL_SIZE,
+  zoomScaler,
+  fetchBackendConfig,
+  fetchSpriteSheet
+} from './config'
 
 // Constants for sprite sheets
-let sprite_side = 73
-let sprite_size = sprite_side * sprite_side
-let sprite_number = 14
-let sprite_image_size = 28
+let sprite_side = SPRITE_SIDE
+let sprite_size = SPRITE_SIZE
+let sprite_number = SPRITE_NUMBER
+let sprite_image_size = SPRITE_IMAGE_SIZE
 // actual sprite size needs to be power of 2
-let sprite_actual_size = 2048
+let sprite_actual_size = SPRITE_ACTUAL_SIZE
 
-let mnist_tile_string = 'mnist_tile_solid_'
-let mnist_tile_locations = [...Array(sprite_number)].map(
-  (n, i) => `${process.env.PUBLIC_URL}/${mnist_tile_string}${i}.png`
-)
-
-let mnist_images = mnist_tile_locations.map(src => {
-  let img = document.createElement('img')
-  img.src = src
-  return img
-})
-
-let zoomScaler = input => {
-  let scale1 = d3
-    .scaleLinear()
-    .domain([20, 5])
-    .range([14, 28])
-    .clamp(true)
-  if (input >= 5) {
-    return scale1(input)
-  } else {
-    return 28
-  }
+async function loadSpriteSheet(start, count) {
+  const response = await fetch(`${BACKEND_URL}/api/mnist/sprite/${start}/${count}`)
+  const blob = await response.blob()
+  return new Promise((resolve) => {
+    let img = document.createElement('img')
+    img.onload = () => resolve(img)
+    img.src = URL.createObjectURL(blob)
+  })
 }
 
 class Projection extends Component {
   constructor(props) {
     super(props)
-    this.state = {}
+    this.state = {
+      spriteSheets: [],
+      spriteSide: 0,
+      spriteSize: 0,
+      nSamples: 0,
+      loading: true,
+      error: null
+    }
     this.init = this.init.bind(this)
     this.addPoints = this.addPoints.bind(this)
     this.handleResize = this.handleResize.bind(this)
@@ -48,6 +52,67 @@ class Projection extends Component {
     this.getScaleFromZ = this.getScaleFromZ.bind(this)
     this.getZFromScale = this.getZFromScale.bind(this)
     this.changeEmbeddings = this.changeEmbeddings.bind(this)
+    this.loadAllSpriteSheets = this.loadAllSpriteSheets.bind(this)
+  }
+
+  async loadAllSpriteSheets() {
+    try {
+      // Fetch backend configuration
+      const config = await fetchBackendConfig();
+      
+      // Calculate how many sprite sheets we need
+      const sheetsNeeded = Math.ceil(config.nSamples / config.spriteSize);
+      const sheets = [];
+      this.textures = [];  // Three.js textures
+      this.spriteImages = [];  // HTML images for canvas
+      
+      // Load each sprite sheet
+      for (let i = 0; i < sheetsNeeded; i++) {
+        const start = i * config.spriteSize;
+        const count = Math.min(config.spriteSize, config.nSamples - start);
+        const sheet = await fetchSpriteSheet(start, count);
+        sheets.push(sheet);
+        
+        // Create Three.js texture
+        const texture = new THREE.Texture(sheet);
+        texture.flipY = false;
+        texture.needsUpdate = true;
+        texture.magFilter = THREE.NearestFilter;
+        this.textures.push(texture);
+        
+        // Store the HTML image
+        this.spriteImages.push(sheet);
+      }
+      
+      this.setState({
+        spriteSheets: sheets,
+        spriteSide: config.spriteSide,
+        spriteSize: config.spriteSize,
+        nSamples: config.nSamples,
+        loading: false
+      }, () => {
+        if (this.scene) {
+          this.updateTextures();
+        } else {
+          this.init();
+        }
+      });
+    } catch (error) {
+      console.error('Error loading sprite sheets:', error);
+      this.setState({ error: error.message, loading: false });
+    }
+  }
+
+  updateTextures() {
+    const { spriteSheets } = this.state;
+    if (!spriteSheets.length) return;
+
+    const pointGroup = this.scene.children[0];
+    spriteSheets.forEach((sheet, i) => {
+      if (pointGroup.children[i]) {
+        pointGroup.children[i].material.uniforms.texture.value = this.textures[i];
+      }
+    });
   }
 
   changeEmbeddings(prev_choice, new_choice) {
@@ -200,13 +265,14 @@ class Projection extends Component {
 
   addPoints() {
     let { mnist_embeddings, mnist_labels, color_array } = this.props
+    const { spriteSize, spriteSide } = this.state
 
     // split embeddings and labels into chunks to match sprites
     let ranges = []
-    for (let i = 0; i < sprite_number; i++) {
-      let start = i * sprite_size
-      let end = (i + 1) * sprite_size
-      if (i === sprite_number - 1) end = sprite_number * sprite_size
+    for (let i = 0; i < this.textures.length; i++) {
+      let start = i * spriteSize
+      let end = (i + 1) * spriteSize
+      if (i === this.textures.length - 1) end = mnist_embeddings.length
       ranges.push([start, end])
     }
     let embedding_chunks = ranges.map(range =>
@@ -216,18 +282,8 @@ class Projection extends Component {
       mnist_labels.slice(range[0], range[1])
     )
 
-    // load the textures
-    let loader = new THREE.TextureLoader()
-    this.textures = mnist_tile_locations.map(l => {
-      let t = loader.load(l)
-      t.flipY = false
-      t.magFilter = THREE.NearestFilter
-      // t.minFilter = THREE.LinearMipMapLinearFilter;
-      return t
-    })
-
     let point_group = new THREE.Group()
-    for (let c = 0; c < sprite_number; c++) {
+    for (let c = 0; c < this.textures.length; c++) {
       let echunk = embedding_chunks[c]
       let lchunk = label_chunks[c]
 
@@ -257,14 +313,11 @@ class Projection extends Component {
         positions[index + 2] = z
       }
 
-      // geometry.attributes.position.copyVector3sArray(vertices)
-
-      let texture_subsize = 1 / sprite_side
+      let texture_subsize = 1 / spriteSide
 
       for (let i = 0, index = 0, l = numVertices; i < l; i++, index += 2) {
-        let x = ((i % sprite_side) * sprite_image_size) / sprite_actual_size
-        let y =
-          (Math.floor(i / sprite_side) * sprite_image_size) / sprite_actual_size
+        let x = (i % spriteSide) / spriteSide
+        let y = Math.floor(i / spriteSide) / spriteSide
         offsets[index] = x
         offsets[index + 1] = y
       }
@@ -280,7 +333,7 @@ class Projection extends Component {
       let uniforms = {
         textureMap: { value: this.textures[c] },
         repeat: { value: new THREE.Vector2(texture_subsize, texture_subsize) },
-        size: { value: sprite_image_size },
+        size: { value: SPRITE_IMAGE_SIZE },
       }
 
       let vertex_shader = `
@@ -303,12 +356,10 @@ class Projection extends Component {
         varying vec3 vColor;
         void main() {
           vec2 uv = vec2( gl_PointCoord.x, gl_PointCoord.y );
-          vec4 tex = texture( textureMap, uv * repeat + vOffset );
+          vec2 spriteUV = vOffset + (uv * repeat);
+          vec4 tex = texture2D( textureMap, spriteUV );
           if ( tex.r < 0.5 ) discard;
-          tex.r = 1.0;
-          tex.g = 1.0;
-          tex.b = 1.0;
-          gl_FragColor = tex * vec4(vColor, 1.0);
+          gl_FragColor = vec4(vColor, tex.r);
         }`
 
       // material
@@ -316,6 +367,7 @@ class Projection extends Component {
         uniforms: uniforms,
         vertexShader: vertex_shader,
         fragmentShader: fragment_shader,
+        transparent: true
       })
 
       // point cloud
@@ -336,19 +388,18 @@ class Projection extends Component {
     let vertices = [vert]
     let geometry = new THREE.BufferGeometry()
     let numVertices = vertices.length
-    var positions = new Float32Array(numVertices * 3) // 3 coordinates per point
-    var offsets = new Float32Array(numVertices * 2) // 2 coordinates per point
+    var positions = new Float32Array(numVertices * 3)
+    var offsets = new Float32Array(numVertices * 2)
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geometry.setAttribute('offset', new THREE.BufferAttribute(offsets, 2))
 
-    // all the attributes will be filled on hover
-    let texture_subsize = 1 / sprite_side
+    let texture_subsize = 1 / this.state.spriteSide
 
     // uniforms
     let uniforms = {
       textureMap: { value: this.textures[0] },
       repeat: { value: new THREE.Vector2(texture_subsize, texture_subsize) },
-      size: { value: 56.0 },
+      size: { value: SPRITE_IMAGE_SIZE * 2.0 },
     }
 
     let vertex_shader = `
@@ -367,12 +418,9 @@ class Projection extends Component {
         varying vec2 vOffset;
         void main() {
           vec2 uv = vec2( gl_PointCoord.x, gl_PointCoord.y );
-          vec4 tex = texture( textureMap, uv * repeat + vOffset );
-          tex.a = tex.r;
-          tex.r = 1.0;
-          tex.g = 1.0;
-          tex.b = 1.0;
-          gl_FragColor = tex;
+          vec2 spriteUV = vOffset + (uv * repeat);
+          vec4 tex = texture2D( textureMap, spriteUV );
+          gl_FragColor = vec4(1.0, 1.0, 1.0, tex.r);
         }`
 
     // material
@@ -403,8 +451,9 @@ class Projection extends Component {
 
     var offsets = new Float32Array(2) // 2 coordinates per point
 
-    let x = ((digit_index % sprite_side) * 28) / 2048
-    let y = (Math.floor(digit_index / sprite_side) * 28) / 2048
+    // Calculate UV coordinates using the same normalized approach
+    let x = (digit_index % this.state.spriteSide) / this.state.spriteSide
+    let y = Math.floor(digit_index / this.state.spriteSide) / this.state.spriteSide
     offsets[0] = x
     offsets[1] = y
 
@@ -454,29 +503,33 @@ class Projection extends Component {
       let intersect = sorted_intersects[0]
       let sprite_index = intersect.object.userData.sprite_index
       let digit_index = intersect.index
-      let full_index = sprite_index * sprite_size + digit_index
+      let full_index = sprite_index * this.state.spriteSize + digit_index
       this.props.setHoverIndex(full_index)
       this.highlightPoint(sprite_index, digit_index, full_index)
       this.scene.children[1].visible = true
 
-      sidebar_ctx.fillRect(0, 0, sidebar_image_size, sidebar_image_size)
-      sidebar_ctx.drawImage(
-        mnist_images[sprite_index],
-        // source rectangle
-        (digit_index % sprite_side) * sprite_image_size,
-        Math.floor(digit_index / sprite_side) * sprite_image_size,
-        sprite_image_size,
-        sprite_image_size,
-        // destination rectangle
-        0,
-        0,
-        sidebar_image_size,
-        sidebar_image_size
-      )
+      if (sidebar_ctx && this.spriteImages[sprite_index]) {
+        sidebar_ctx.fillRect(0, 0, sidebar_image_size, sidebar_image_size)
+        sidebar_ctx.drawImage(
+          this.spriteImages[sprite_index],  // Use HTML image instead of Three.js texture
+          // source rectangle
+          (digit_index % this.state.spriteSide) * SPRITE_IMAGE_SIZE,
+          Math.floor(digit_index / this.state.spriteSide) * SPRITE_IMAGE_SIZE,
+          SPRITE_IMAGE_SIZE,
+          SPRITE_IMAGE_SIZE,
+          // destination rectangle
+          0,
+          0,
+          sidebar_image_size,
+          sidebar_image_size
+        )
+      }
     } else {
       this.props.setHoverIndex(null)
       this.scene.children[1].visible = false
-      sidebar_ctx.fillRect(0, 0, sidebar_image_size, sidebar_image_size)
+      if (sidebar_ctx) {
+        sidebar_ctx.fillRect(0, 0, sidebar_image_size, sidebar_image_size)
+      }
     }
   }
 
@@ -527,7 +580,7 @@ class Projection extends Component {
   }
 
   componentDidMount() {
-    this.init()
+    this.loadAllSpriteSheets()
   }
 
   componentDidUpdate(prevProps) {
@@ -548,15 +601,25 @@ class Projection extends Component {
   }
 
   render() {
-    let { width, height } = this.props
+    const { width, height } = this.props;
+    const { loading, error } = this.state;
+
+    if (loading) {
+      return <div style={{ padding: '1rem' }}>Loading sprites...</div>;
+    }
+
+    if (error) {
+      return <div style={{ padding: '1rem', color: 'red' }}>Error: {error}</div>;
+    }
+
     return (
       <div
         style={{ width: width, height: height, overflow: 'hidden' }}
         ref={mount => {
-          this.mount = mount
+          this.mount = mount;
         }}
       />
-    )
+    );
   }
 }
 
